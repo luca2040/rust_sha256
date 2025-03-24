@@ -1,25 +1,18 @@
+use std::time::Instant;
+
 // ################ some shit to print things ################
 
 trait Printable {
     fn print(&self);
 }
 
-impl Printable for String {
-    fn print(&self) {
-        println!("{}", self);
-    }
-}
-
-impl Printable for Vec<u8> {
+impl<const N: usize> Printable for [u8; N] {
     fn print(&self) {
         let hex_groups = self
             .chunks(2)
-            .map(|pair| {
-                if pair.len() > 1 {
-                    format!("{:02X} {:02X}", pair[0], pair[1])
-                } else {
-                    format!("{:02X}", pair[0])
-                }
+            .map(|pair| match pair.len() {
+                1 => format!("{:02X}", pair[0]),
+                _ => format!("{:02X} {:02X}", pair[0], pair[1]),
             })
             .collect::<Vec<String>>();
 
@@ -65,25 +58,64 @@ fn pad_message(msg: &mut Vec<u8>) {
 }
 
 /// divide padded message into blocks
-fn get_blocks(p_msg: Vec<u8>) -> Vec<Vec<u8>> {
+fn get_blocks(p_msg: Vec<u8>) -> Vec<[u8; 64]> {
     let msg_len = p_msg.len();
     let num_chunks = msg_len / 64;
 
-    let mut blocks = Vec::new();
+    let mut blocks = Vec::with_capacity(num_chunks);
 
     for i in 0..num_chunks {
         let start = i * 64;
         let end = start + 64;
 
-        let chunk = &p_msg[start..end];
-        blocks.push(chunk.to_vec());
+        let chunk: &[u8] = &p_msg[start..end];
+
+        let mut array = [0u8; 64];
+        array.copy_from_slice(chunk);
+
+        blocks.push(array);
     }
 
     blocks
 }
 
+/// convert bytes to integer
+fn int_from_bytes(bytes: &[u8; 4]) -> u32 {
+    (bytes[0] as u32) << 24 | (bytes[1] as u32) << 16 | (bytes[2] as u32) << 8 | bytes[3] as u32
+}
+
+/// as sha256 definition
+fn sigma0(num: u32) -> u32 {
+    num.rotate_right(7) ^ num.rotate_right(18) ^ (num >> 3)
+}
+
+/// as sha256 definition
+fn sigma1(num: u32) -> u32 {
+    num.rotate_right(17) ^ num.rotate_right(19) ^ (num >> 10)
+}
+
+/// as sha256 definition
+fn capsigma0(num: u32) -> u32 {
+    num.rotate_right(2) ^ num.rotate_right(13) ^ num.rotate_right(22)
+}
+
+/// as sha256 definition
+fn capsigma1(num: u32) -> u32 {
+    num.rotate_right(6) ^ num.rotate_right(11) ^ num.rotate_right(25)
+}
+
+/// as sha256 definition
+fn ch(x: u32, y: u32, z: u32) -> u32 {
+    (x & y) ^ (!x & z)
+}
+
+/// as sha256 definition
+fn maj(x: u32, y: u32, z: u32) -> u32 {
+    (x & y) ^ (x & z) ^ (y & z)
+}
+
 /// returns sha256 hash of the input string
-fn hash(msg: &str) -> &str {
+fn hash(msg: &str) -> [u8; 32] {
     let mut message = string_to_byte_array(msg.to_string());
 
     pad_message(&mut message);
@@ -100,15 +132,93 @@ fn hash(msg: &str) -> &str {
     let mut h6: u32 = 0x1F83D9AB;
     let mut h7: u32 = 0x5BE0CD19;
 
-    for block in blocks {}
+    for block in blocks {
+        let mut message_schedule: Vec<[u8; 4]> = Vec::with_capacity(64);
 
-    "still testing"
+        for t in 0..64 {
+            if t <= 15 {
+                let mut word = [0u8; 4];
+                word.copy_from_slice(&block[t * 4..(t * 4) + 4]);
+                message_schedule.push(word);
+            } else {
+                let term1: u64 =
+                    sigma1(int_from_bytes(message_schedule.get(t - 2).unwrap())) as u64;
+                let term2: u64 = int_from_bytes(message_schedule.get(t - 7).unwrap()) as u64;
+                let term3: u64 =
+                    sigma0(int_from_bytes(message_schedule.get(t - 15).unwrap())) as u64;
+                let term4: u64 = int_from_bytes(message_schedule.get(t - 16).unwrap()) as u64;
+
+                message_schedule
+                    .push((((term1 + term2 + term3 + term4) % 0x100000000) as u32).to_be_bytes());
+            }
+        }
+
+        let mut a: u32 = h0;
+        let mut b: u32 = h1;
+        let mut c: u32 = h2;
+        let mut d: u32 = h3;
+        let mut e: u32 = h4;
+        let mut f: u32 = h5;
+        let mut g: u32 = h6;
+        let mut h: u32 = h7;
+
+        for t in 0..64 {
+            let t1: u32 = ((h as u64
+                + capsigma1(e) as u64
+                + ch(e, f, g) as u64
+                + K[t] as u64
+                + int_from_bytes(&message_schedule[t]) as u64)
+                % 0x100000000) as u32;
+
+            let t2: u32 = ((capsigma0(a) as u64 + maj(a, b, c) as u64) % 0x100000000) as u32;
+
+            h = g;
+            g = f;
+            f = e;
+            e = ((d as u64 + t1 as u64) % 0x100000000) as u32;
+            d = c;
+            c = b;
+            b = a;
+            a = ((t1 as u64 + t2 as u64) % 0x100000000) as u32;
+        }
+
+        h0 = ((h0 as u64 + a as u64) % 0x100000000) as u32;
+        h1 = ((h1 as u64 + b as u64) % 0x100000000) as u32;
+        h2 = ((h2 as u64 + c as u64) % 0x100000000) as u32;
+        h3 = ((h3 as u64 + d as u64) % 0x100000000) as u32;
+        h4 = ((h4 as u64 + e as u64) % 0x100000000) as u32;
+        h5 = ((h5 as u64 + f as u64) % 0x100000000) as u32;
+        h6 = ((h6 as u64 + g as u64) % 0x100000000) as u32;
+        h7 = ((h7 as u64 + h as u64) % 0x100000000) as u32;
+    }
+
+    let mut result: [u8; 32] = [0u8; 32];
+
+    result[0..4].copy_from_slice(&h0.to_be_bytes());
+    result[4..8].copy_from_slice(&h1.to_be_bytes());
+    result[8..12].copy_from_slice(&h2.to_be_bytes());
+    result[12..16].copy_from_slice(&h3.to_be_bytes());
+    result[16..20].copy_from_slice(&h4.to_be_bytes());
+    result[20..24].copy_from_slice(&h5.to_be_bytes());
+    result[24..28].copy_from_slice(&h6.to_be_bytes());
+    result[28..32].copy_from_slice(&h7.to_be_bytes());
+
+    result
 }
 
 fn main() {
     let input = "Hello";
 
-    let hash_result = hash(input);
+    hash(input);
 
-    println!("Result: {}", hash_result);
+    let start = Instant::now();
+    let hash_result = hash(input);
+    let elapsed = start.elapsed();
+
+    println!("Result:");
+    print_data(&hash_result);
+
+    let seconds = elapsed.as_secs_f64();
+
+    println!("Rust time: {}", seconds);
 }
