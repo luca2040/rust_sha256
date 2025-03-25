@@ -10,34 +10,28 @@ const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-/// inline rotate right
-#[inline(always)]
-fn rotr(x: u32, n: u32) -> u32 {
-    x.rotate_right(n)
-}
-
 /// as sha256 definition
 #[inline(always)]
 fn sigma0(num: u32) -> u32 {
-    rotr(num, 7) ^ rotr(num, 18) ^ (num >> 3)
+    num.rotate_right(7) ^ num.rotate_right(18) ^ (num >> 3)
 }
 
 /// as sha256 definition
 #[inline(always)]
 fn sigma1(num: u32) -> u32 {
-    rotr(num, 17) ^ rotr(num, 19) ^ (num >> 10)
+    num.rotate_right(17) ^ num.rotate_right(19) ^ (num >> 10)
 }
 
 /// as sha256 definition
 #[inline(always)]
 fn capsigma0(num: u32) -> u32 {
-    rotr(num, 2) ^ rotr(num, 13) ^ rotr(num, 22)
+    num.rotate_right(2) ^ num.rotate_right(13) ^ num.rotate_right(22)
 }
 
 /// as sha256 definition
 #[inline(always)]
 fn capsigma1(num: u32) -> u32 {
-    rotr(num, 6) ^ rotr(num, 11) ^ rotr(num, 25)
+    num.rotate_right(6) ^ num.rotate_right(11) ^ num.rotate_right(25)
 }
 
 /// as sha256 definition
@@ -94,8 +88,14 @@ pub fn hash(msg: &str) -> [u8; 32] {
                 .wrapping_add(message_schedule[t - 16]);
         }
 
-        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h) =
-            (h0, h1, h2, h3, h4, h5, h6, h7);
+        let mut a: u32 = h0;
+        let mut b: u32 = h1;
+        let mut c: u32 = h2;
+        let mut d: u32 = h3;
+        let mut e: u32 = h4;
+        let mut f: u32 = h5;
+        let mut g: u32 = h6;
+        let mut h: u32 = h7;
 
         for t in 0..64 {
             let t1 = h
